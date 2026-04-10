@@ -43,6 +43,11 @@ Because MediaPipe requires secure contexts to access the device camera, the simp
 - **Create**: Curl all fingers except your Index finger straight up. Hold for 0.3s.
 - **Grab / Interact**: Bring your Thumb and Index finger together to pinch an object on the spatial cursor.
 
+## ScreenShots
+<img width="1903" height="937" alt="image" src="https://github.com/user-attachments/assets/e9344f6f-bf3e-425b-b0d6-adcef1a59f94" />
+
+<img width="1919" height="969" alt="image" src="https://github.com/user-attachments/assets/4c72e08d-4967-4fd3-bcaa-ae217cb9412c" />
+
 ## License
 
 This project is open-source and free to modify.
