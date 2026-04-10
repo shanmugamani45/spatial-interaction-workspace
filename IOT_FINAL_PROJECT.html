@@ -1,0 +1,1210 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Spatial Interaction System</title>
+    <!-- Import Maps for Modern Three.js with Post-Processing -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #282828;
+            font-family: 'Inter', sans-serif;
+        }
+
+        #video-container {
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+            visibility: hidden;
+        }
+
+        /* hide raw video, draw on canvas */
+        canvas#output-canvas {
+            position: absolute;
+            inset: 0;
+            z-index: 2;
+            opacity: 0.15;
+            object-fit: cover;
+            width: 100%;
+            height: 100%;
+        }
+
+        #three-container {
+            position: absolute;
+            inset: 0;
+            z-index: 3;
+        }
+
+        /* Glassmorphism UI */
+        .glass-panel {
+            background: rgba(10, 15, 30, 0.6);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(0, 242, 255, 0.2);
+            box-shadow: 0 8px 32px 0 rgba(0, 242, 255, 0.1);
+        }
+
+        .tool-btn {
+            transition: all 0.2s ease;
+            cursor: pointer;
+            outline: none;
+        }
+
+        .tool-btn.active {
+            background: rgba(0, 242, 255, 0.3);
+            border-color: #00f2ff;
+            box-shadow: 0 0 15px rgba(0, 242, 255, 0.5);
+        }
+
+        .tool-btn:hover:not(.active) {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        /* Cursor */
+        #spatial-cursor {
+            position: absolute;
+            width: 30px;
+            height: 30px;
+            border: 2px solid #00f2ff;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 100;
+            transition: width 0.1s, height 0.1s, background-color 0.1s, border-color 0.1s;
+        }
+
+        #spatial-cursor.grabbing {
+            width: 20px;
+            height: 20px;
+            background-color: rgba(0, 242, 255, 0.5);
+            border-width: 4px;
+        }
+
+        #spatial-cursor.deleting {
+            border-color: #ff0055;
+            background-color: rgba(255, 0, 85, 0.2);
+        }
+
+        /* Load Screen */
+        #loading-screen {
+            position: fixed;
+            inset: 0;
+            background: #050510;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            color: #00f2ff;
+        }
+
+        .spinner {
+            width: 60px;
+            height: 60px;
+            border: 4px solid rgba(0, 242, 255, 0.2);
+            border-top-color: #00f2ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Help Modal */
+        #help-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(6px);
+            z-index: 500;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.25s ease;
+        }
+        #help-overlay.open {
+            opacity: 1;
+            pointer-events: all;
+        }
+        #help-modal {
+            background: rgba(8, 14, 28, 0.92);
+            border: 1px solid rgba(0, 242, 255, 0.3);
+            box-shadow: 0 0 60px rgba(0, 242, 255, 0.15), 0 24px 48px rgba(0,0,0,0.5);
+            border-radius: 18px;
+            width: 520px;
+            max-width: 94vw;
+            max-height: 80vh;
+            overflow-y: auto;
+            padding: 32px;
+            color: #e0f7ff;
+            font-family: 'Inter', sans-serif;
+            transform: translateY(16px);
+            transition: transform 0.25s ease;
+        }
+        #help-modal::-webkit-scrollbar {
+            width: 6px;
+        }
+        #help-modal::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 3px;
+        }
+        #help-modal::-webkit-scrollbar-thumb {
+            background: rgba(0, 242, 255, 0.3);
+            border-radius: 3px;
+        }
+        #help-modal::-webkit-scrollbar-thumb:hover {
+            background: rgba(0, 242, 255, 0.5);
+        }
+        #help-overlay.open #help-modal {
+            transform: translateY(0);
+        }
+        .help-section-title {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: #00f2ff;
+            margin-bottom: 10px;
+            margin-top: 20px;
+        }
+        .help-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .help-row:last-child { border-bottom: none; }
+        .help-icon {
+            font-size: 20px;
+            width: 28px;
+            text-align: center;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+        .help-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #ffffff;
+        }
+        .help-desc {
+            font-size: 11.5px;
+            color: rgba(200,230,255,0.6);
+            margin-top: 2px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="loading-screen">
+        <div class="spinner mb-6"></div>
+        <h2 class="text-2xl font-light tracking-widest uppercase mb-2">Initializing System</h2>
+        <p class="text-cyan-400/60 text-sm">Loading AI Models & 3D Environment...</p>
+        <p class="text-cyan-400/40 mt-1 text-xs italic">Please allow camera access.</p>
+    </div>
+
+    <div id="video-container">
+        <video id="video-element" playsinline></video>
+    </div>
+    <canvas id="output-canvas"></canvas>
+    <div id="three-container"></div>
+    <div id="spatial-cursor"></div>
+
+    <!-- Memory UI (Top-Left) -->
+    <div id="memory-layer" class="absolute top-4 left-4 z-20 flex gap-3 select-none">
+        <button id="btn-save"
+            class="glass-panel px-4 py-2 rounded-lg text-xs font-bold tracking-wider text-cyan-400 hover:bg-[#00f2ff]/10 hover:text-white transition-all flex items-center gap-2 border border-transparent hover:border-[#00f2ff]/50">
+            💾 SAVE SCENE
+        </button>
+        <button id="btn-load"
+            class="glass-panel px-4 py-2 rounded-lg text-xs font-bold tracking-wider text-green-400 hover:bg-[#00ff88]/10 hover:text-white transition-all flex items-center gap-2 border border-transparent hover:border-[#00ff88]/50">
+            📂 LOAD SCENE
+        </button>
+        <button id="btn-help"
+            class="glass-panel px-4 py-2 rounded-lg text-xs font-bold tracking-wider text-yellow-300 hover:bg-yellow-400/10 hover:text-white transition-all flex items-center gap-2 border border-transparent hover:border-yellow-400/50">
+            ❓ HELP
+        </button>
+    </div>
+
+    <!-- Help Modal -->
+    <div id="help-overlay">
+        <div id="help-modal">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+                <h2 style="font-size:18px;font-weight:700;color:#00f2ff;letter-spacing:0.06em;">How to Use</h2>
+                <button id="btn-close-help" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);color:#aaa;border-radius:8px;padding:4px 12px;font-size:12px;cursor:pointer;transition:all 0.2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#aaa'">✕ Close</button>
+            </div>
+            <p style="font-size:12px;color:rgba(200,230,255,0.5);margin-bottom:4px;">Gesture-controlled 3D workspace — use your hand in front of the camera.</p>
+
+            <div class="help-section-title">✋ Gestures</div>
+            <div class="help-row">
+                <span class="help-icon">☝️</span>
+                <div><div class="help-label">Index Finger Up — Create Shape</div><div class="help-desc">Point your index finger straight up (other fingers curled). Hold ~0.3s to spawn the selected shape.</div></div>
+            </div>
+            <div class="help-row">
+                <span class="help-icon">🤌</span>
+                <div><div class="help-label">Pinch — Grab &amp; Act</div><div class="help-desc">Bring thumb and index finger together over an object to grab and interact based on the active tool.</div></div>
+            </div>
+
+            <div class="help-section-title">🛠️ Interaction Tools</div>
+            <div class="help-row">
+                <span class="help-icon">✥</span>
+                <div><div class="help-label">Move</div><div class="help-desc">Pinch an object and drag to move it through 3D space.</div></div>
+            </div>
+            <div class="help-row">
+                <span class="help-icon">🔄</span>
+                <div><div class="help-label">Rotate</div><div class="help-desc">Pinch an object and move your hand left/right or up/down to rotate it.</div></div>
+            </div>
+            <div class="help-row">
+                <span class="help-icon">⤢</span>
+                <div><div class="help-label">Scale</div><div class="help-desc">Pinch an object and move your hand up to grow it, or down to shrink it.</div></div>
+            </div>
+            <div class="help-row">
+                <span class="help-icon">🗑️</span>
+                <div><div class="help-label">Delete</div><div class="help-desc">Switch to Delete mode, then pinch an object to remove it with a shrink animation.</div></div>
+            </div>
+            <div class="help-row">
+                <span class="help-icon">🔗</span>
+                <div><div class="help-label">Combine</div><div class="help-desc">Switch to Combine mode, then pinch and drag an object into another to fuse them.</div></div>
+            </div>
+
+            <div class="help-section-title">🧱 Shape Builder</div>
+            <div class="help-row">
+                <span class="help-icon">🔷</span>
+                <div><div class="help-label">Select a shape</div><div class="help-desc">Click Cube, Sphere, Cone, Cylinder, or Torus to set the active shape type.</div></div>
+            </div>
+            <div class="help-row">
+                <span class="help-icon">☝️</span>
+                <div><div class="help-label">Point up to spawn</div><div class="help-desc">After selecting a shape, raise your index finger to create it at the scene center.</div></div>
+            </div>
+
+            <div class="help-section-title">💾 Scene Memory</div>
+            <div class="help-row">
+                <span class="help-icon">💾</span>
+                <div><div class="help-label">Save Scene</div><div class="help-desc">Stores all objects (position, rotation, scale, shape type) in browser local storage.</div></div>
+            </div>
+            <div class="help-row">
+                <span class="help-icon">📂</span>
+                <div><div class="help-label">Load Scene</div><div class="help-desc">Restores the last saved scene, clearing any current objects.</div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- UI Dashboard -->
+    <div id="ui-layer"
+        class="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-20 flex justify-between px-6 py-4 rounded-2xl glass-panel text-white select-none">
+        <div class="flex flex-col gap-2 relative z-30">
+            <span class="text-xs text-cyan-400 font-bold tracking-wider uppercase mb-1">Interaction Tool</span>
+            <div class="flex gap-2 sm:gap-3">
+                <button
+                    class="tool-btn active px-3 sm:px-4 py-2 rounded-lg border border-transparent text-xs sm:text-sm flex items-center gap-2"
+                    id="btn-move">
+                    MOVE
+                </button>
+                <button
+                    class="tool-btn px-3 sm:px-4 py-2 rounded-lg border border-transparent text-xs sm:text-sm flex items-center gap-2"
+                    id="btn-rotate">
+                    ROTATE
+                </button>
+                <button
+                    class="tool-btn px-3 sm:px-4 py-2 rounded-lg border border-transparent text-xs sm:text-sm flex items-center gap-2"
+                    id="btn-scale">
+                    SCALE
+                </button>
+                <button
+                    class="tool-btn px-3 sm:px-4 py-2 rounded-lg border border-transparent text-xs sm:text-sm flex items-center gap-2 text-rose-400"
+                    id="btn-delete">
+                    DELETE
+                </button>
+                <div class="w-[1px] h-6 bg-cyan-400/20 mx-1 self-center"></div>
+                <button
+                    class="tool-btn px-3 sm:px-4 py-2 rounded-lg border border-transparent text-xs sm:text-sm flex items-center gap-2 text-purple-400"
+                    id="btn-combine">
+                    COMBINE
+                </button>
+            </div>
+        </div>
+        <div class="w-[1px] bg-cyan-400/20 mx-4 sm:mx-6"></div>
+        <div class="flex flex-col gap-2 relative z-30">
+            <span class="text-xs text-cyan-400 font-bold tracking-wider uppercase mb-1">Shape Builder</span>
+            <div class="flex gap-2 sm:gap-3 items-center">
+                <button
+                    class="tool-btn active px-3 sm:px-4 py-2 rounded-lg border border-transparent text-xs sm:text-sm hover:!bg-white/10"
+                    id="shape-cube">Cube</button>
+                <button
+                    class="tool-btn px-3 sm:px-4 py-2 rounded-lg border border-transparent text-xs sm:text-sm hover:!bg-white/10"
+                    id="shape-sphere">Sphere</button>
+                <button
+                    class="tool-btn px-3 sm:px-4 py-2 rounded-lg border border-transparent text-xs sm:text-sm hover:!bg-white/10"
+                    id="shape-cone">Cone</button>
+                <button
+                    class="tool-btn px-3 sm:px-4 py-2 rounded-lg border border-transparent text-xs sm:text-sm hover:!bg-white/10"
+                    id="shape-cylinder">Cylinder</button>
+                 <button
+                    class="tool-btn px-3 sm:px-4 py-2 rounded-lg border border-transparent text-xs sm:text-sm hover:!bg-white/10"
+                    id="shape-torus">Torus</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Transform Properties Panel -->
+    <div id="transform-panel"
+        class="absolute top-[140px] right-4 z-20 w-60 bg-[#2b2b2b]/95 backdrop-blur-md border border-[#444] rounded-lg shadow-2xl text-xs text-gray-300 font-sans hidden select-none">
+        <div class="flex items-center px-3 py-2 border-b border-[#444] bg-[#222] rounded-t-lg">
+            <span class="font-semibold text-xs tracking-wider uppercase text-cyan-400">Transform</span>
+        </div>
+
+        <div class="p-3 space-y-4">
+            <!-- Location -->
+            <div>
+                <div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1 font-bold">Location</div>
+                <div class="space-y-1">
+                    <div class="flex items-center"><span class="w-4 text-[10px] text-red-500 font-bold">X</span><input
+                            type="number" step="0.1" id="loc-x"
+                            class="flex-1 bg-[#111] border border-[#333] rounded px-2 py-1 outline-none focus:border-[#00f2ff] transition-colors text-right font-mono"
+                            inputmode="decimal"></div>
+                    <div class="flex items-center"><span class="w-4 text-[10px] text-green-500 font-bold">Y</span><input
+                            type="number" step="0.1" id="loc-y"
+                            class="flex-1 bg-[#111] border border-[#333] rounded px-2 py-1 outline-none focus:border-[#00f2ff] transition-colors text-right font-mono"
+                            inputmode="decimal"></div>
+                    <div class="flex items-center"><span class="w-4 text-[10px] text-blue-500 font-bold">Z</span><input
+                            type="number" step="0.1" id="loc-z"
+                            class="flex-1 bg-[#111] border border-[#333] rounded px-2 py-1 outline-none focus:border-[#00f2ff] transition-colors text-right font-mono"
+                            inputmode="decimal"></div>
+                </div>
+            </div>
+
+            <!-- Rotation -->
+            <div>
+                <div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1 font-bold">Rotation (°)</div>
+                <div class="space-y-1">
+                    <div class="flex items-center"><span class="w-4 text-[10px] text-red-500 font-bold">X</span><input
+                            type="number" step="5" id="rot-x"
+                            class="flex-1 bg-[#111] border border-[#333] rounded px-2 py-1 outline-none focus:border-[#00f2ff] transition-colors text-right font-mono"
+                            inputmode="decimal"></div>
+                    <div class="flex items-center"><span class="w-4 text-[10px] text-green-500 font-bold">Y</span><input
+                            type="number" step="5" id="rot-y"
+                            class="flex-1 bg-[#111] border border-[#333] rounded px-2 py-1 outline-none focus:border-[#00f2ff] transition-colors text-right font-mono"
+                            inputmode="decimal"></div>
+                    <div class="flex items-center"><span class="w-4 text-[10px] text-blue-500 font-bold">Z</span><input
+                            type="number" step="5" id="rot-z"
+                            class="flex-1 bg-[#111] border border-[#333] rounded px-2 py-1 outline-none focus:border-[#00f2ff] transition-colors text-right font-mono"
+                            inputmode="decimal"></div>
+                </div>
+            </div>
+
+            <!-- Scale -->
+            <div>
+                <div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1 font-bold">Scale</div>
+                <div class="space-y-1">
+                    <div class="flex items-center"><span class="w-4 text-[10px] text-gray-400 font-bold">X</span><input
+                            type="number" step="0.1" id="scale-x"
+                            class="flex-1 bg-[#111] border border-[#333] rounded px-2 py-1 outline-none focus:border-[#00f2ff] transition-colors text-right font-mono"
+                            inputmode="decimal"></div>
+                    <div class="flex items-center"><span class="w-4 text-[10px] text-gray-400 font-bold">Y</span><input
+                            type="number" step="0.1" id="scale-y"
+                            class="flex-1 bg-[#111] border border-[#333] rounded px-2 py-1 outline-none focus:border-[#00f2ff] transition-colors text-right font-mono"
+                            inputmode="decimal"></div>
+                    <div class="flex items-center"><span class="w-4 text-[10px] text-gray-400 font-bold">Z</span><input
+                            type="number" step="0.1" id="scale-z"
+                            class="flex-1 bg-[#111] border border-[#333] rounded px-2 py-1 outline-none focus:border-[#00f2ff] transition-colors text-right font-mono"
+                            inputmode="decimal"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+        import { ViewHelper } from 'three/addons/helpers/ViewHelper.js';
+
+        // ----------------------------------------------------
+        // UI Logic Binding
+        // ----------------------------------------------------
+        let currentTool = 'move'; // Options: move, rotate, scale, delete
+        let currentShape = 'cube'; // Options: cube, sphere, cone, cylinder, torus
+
+        const toolBtns = {
+            'move': document.getElementById('btn-move'),
+            'rotate': document.getElementById('btn-rotate'),
+            'scale': document.getElementById('btn-scale'),
+            'delete': document.getElementById('btn-delete'),
+            'combine': document.getElementById('btn-combine')
+        };
+
+        const shapeBtns = {
+            'cube': document.getElementById('shape-cube'),
+            'sphere': document.getElementById('shape-sphere'),
+            'cone': document.getElementById('shape-cone'),
+            'cylinder': document.getElementById('shape-cylinder'),
+            'torus': document.getElementById('shape-torus')
+        };
+
+        Object.keys(toolBtns).forEach(key => {
+            // use both mousedown and touchstart for better responsiveness if testing with mouse
+            toolBtns[key].addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                Object.values(toolBtns).forEach(btn => btn.classList.remove('active'));
+                toolBtns[key].classList.add('active');
+                currentTool = key;
+            });
+        });
+
+        Object.keys(shapeBtns).forEach(key => {
+            shapeBtns[key].addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                Object.values(shapeBtns).forEach(btn => btn.classList.remove('active'));
+                shapeBtns[key].classList.add('active');
+                currentShape = key;
+            });
+        });
+
+        // ----------------------------------------------------
+        // Help Modal Logic
+        // ----------------------------------------------------
+        const helpOverlay = document.getElementById('help-overlay');
+        document.getElementById('btn-help').addEventListener('click', () => {
+            helpOverlay.classList.add('open');
+        });
+        document.getElementById('btn-close-help').addEventListener('click', () => {
+            helpOverlay.classList.remove('open');
+        });
+        // Click outside modal to close
+        helpOverlay.addEventListener('pointerdown', (e) => {
+            if (e.target === helpOverlay) helpOverlay.classList.remove('open');
+        });
+
+        // Thumbs-up gesture state
+        let thumbsUpFrames = 0;          // consecutive frames detecting thumbs-up
+        const THUMBS_UP_THRESHOLD = 18;  // ~0.3s at 60fps
+        let thumbsUpCooldown = false;
+
+        // Toast notification for shape spawn
+        function showSpawnToast(shapeName) {
+            let toast = document.getElementById('spawn-toast');
+            if (!toast) {
+                toast = document.createElement('div');
+                toast.id = 'spawn-toast';
+                toast.style.cssText = `position:fixed;bottom:120px;left:50%;transform:translateX(-50%) translateY(20px);
+                    background:rgba(0,242,255,0.15);border:1px solid rgba(0,242,255,0.5);
+                    backdrop-filter:blur(12px);color:#00f2ff;font-size:13px;font-weight:600;
+                    padding:10px 22px;border-radius:999px;z-index:200;pointer-events:none;
+                    opacity:0;transition:opacity 0.25s ease,transform 0.25s ease;
+                    letter-spacing:0.08em;`;
+                document.body.appendChild(toast);
+            }
+            toast.textContent = `👍 ${shapeName.toUpperCase()} CREATED`;
+            toast.style.opacity = '1';
+            toast.style.transform = 'translateX(-50%) translateY(0)';
+            clearTimeout(toast._hideTimer);
+            toast._hideTimer = setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(-50%) translateY(20px)';
+            }, 1500);
+        }
+
+        // ----------------------------------------------------
+        // Transform Panel Logic
+        // ----------------------------------------------------
+        let selectedObject = null;
+        const transformPanel = document.getElementById('transform-panel');
+        const transformInputs = {
+            loc: { x: document.getElementById('loc-x'), y: document.getElementById('loc-y'), z: document.getElementById('loc-z') },
+            rot: { x: document.getElementById('rot-x'), y: document.getElementById('rot-y'), z: document.getElementById('rot-z') },
+            scale: { x: document.getElementById('scale-x'), y: document.getElementById('scale-y'), z: document.getElementById('scale-z') }
+        };
+
+        function setHighlight(obj, intensity, isHighlightingTarget = false) {
+            if (!obj) return;
+            obj.traverse((child) => {
+                if (child.isMesh && child.material && child.material.emissive) {
+                    if (isHighlightingTarget) {
+                        child.material.emissive.setHex(0x550000); // Red hue for collision indication
+                    } else {
+                        child.material.emissive.setHex(0x004455); // Default cyan hue
+                    }
+                    child.material.emissiveIntensity = intensity;
+                }
+            });
+        }
+
+        function selectObject(mesh) {
+            if (selectedObject === mesh) return;
+            if (selectedObject) setHighlight(selectedObject, 0.5); // restore normal
+            selectedObject = mesh;
+            if (selectedObject) {
+                setHighlight(selectedObject, 0.8); // highlight
+                transformPanel.classList.remove('hidden');
+            } else {
+                transformPanel.classList.add('hidden');
+            }
+        }
+
+        function getRootObject(mesh) {
+            let obj = mesh;
+            while (obj && !objects.includes(obj)) {
+                obj = obj.parent;
+            }
+            return obj || mesh;
+        }
+
+        ['x', 'y', 'z'].forEach(axis => {
+            ['loc', 'rot', 'scale'].forEach(type => {
+                transformInputs[type][axis].addEventListener('input', (e) => {
+                    if (!selectedObject) return;
+                    const val = parseFloat(e.target.value);
+                    if (isNaN(val)) return;
+
+                    if (type === 'loc') selectedObject.position[axis] = val;
+                    if (type === 'rot') selectedObject.rotation[axis] = THREE.MathUtils.degToRad(val);
+                    if (type === 'scale') {
+                        selectedObject.scale[axis] = val;
+                        if (selectedObject.userData.targetScale) selectedObject.userData.targetScale[axis] = val;
+                    }
+                });
+            });
+        });
+
+        // ----------------------------------------------------
+        // Save / Load Memory Logic
+        // ----------------------------------------------------
+        const btnSave = document.getElementById('btn-save');
+        const btnLoad = document.getElementById('btn-load');
+
+        btnSave.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+
+            function serializeObject(obj) {
+                const data = {
+                    shapeType: obj.userData.shapeType || 'group',
+                    position: { x: obj.position.x, y: obj.position.y, z: obj.position.z },
+                    rotation: { x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z },
+                    scale: { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z }
+                };
+                if (data.shapeType === 'group' && obj.children && obj.children.length > 0) {
+                    data.children = obj.children
+                        .filter(c => c.isMesh || (c.isGroup && c.userData.shapeType)) // ignore purely decorative lines
+                        .map(c => serializeObject(c));
+                }
+                return data;
+            }
+
+            const sceneData = objects.map(o => serializeObject(o));
+            localStorage.setItem('spatial_scene_memory', JSON.stringify(sceneData));
+
+            // Temporary flash effect to show save
+            btnSave.innerHTML = `✅ SAVED!`;
+            setTimeout(() => btnSave.innerHTML = `💾 SAVE SCENE`, 1000);
+        });
+
+        btnLoad.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            const savedData = localStorage.getItem('spatial_scene_memory');
+            if (!savedData) return;
+
+            try {
+                const parsedData = JSON.parse(savedData);
+
+                // 1. Wipe current scene
+                function disposeHierarchy(node) {
+                    if (node.geometry) node.geometry.dispose();
+                    if (node.material) {
+                        if (Array.isArray(node.material)) {
+                            node.material.forEach(m => m.dispose());
+                        } else {
+                            node.material.dispose();
+                        }
+                    }
+                    if (node.children) {
+                        node.children.forEach(child => disposeHierarchy(child));
+                    }
+                }
+                
+                objects.forEach(obj => {
+                    scene.remove(obj);
+                    disposeHierarchy(obj);
+                });
+                objects = [];
+                selectObject(null);
+                hoveredObject = null;
+                grabbedObject = null;
+                isPinching = false;
+
+                // 2. Reconstruct from saved state
+                function deserializeObject(data) {
+                    let newObj;
+                    if (data.shapeType === 'group') {
+                        newObj = new THREE.Group();
+                        newObj.userData.shapeType = 'group';
+                        newObj.userData.targetScale = new THREE.Vector3(data.scale.x, data.scale.y, data.scale.z);
+                        if (data.children) {
+                            data.children.forEach(childData => {
+                                const child = deserializeObject(childData);
+                                if (child) newObj.add(child);
+                            });
+                        }
+                    } else {
+                        let geo;
+                        if (data.shapeType === 'cube') geo = new THREE.BoxGeometry(1, 1, 1);
+                        else if (data.shapeType === 'sphere') geo = new THREE.SphereGeometry(0.6, 32, 32);
+                        else if (data.shapeType === 'cone') geo = new THREE.ConeGeometry(0.6, 1.2, 32);
+                        else if (data.shapeType === 'cylinder') geo = new THREE.CylinderGeometry(0.6, 0.6, 1.2, 32);
+                        else if (data.shapeType === 'torus') geo = new THREE.TorusGeometry(0.5, 0.2, 16, 100);
+                        else geo = new THREE.BoxGeometry(1, 1, 1);
+
+                        const mat = new THREE.MeshStandardMaterial({
+                            color: 0x00f2ff, transparent: true, opacity: 0.7,
+                            roughness: 0.1, metalness: 0.8, emissive: 0x004455, emissiveIntensity: 0.5
+                        });
+                        newObj = new THREE.Mesh(geo, mat);
+                        const edges = new THREE.EdgesGeometry(geo);
+                        const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.8 }));
+                        newObj.add(line);
+                        newObj.userData.shapeType = data.shapeType;
+                        newObj.userData.targetScale = new THREE.Vector3(data.scale.x, data.scale.y, data.scale.z);
+                    }
+                    newObj.position.set(data.position.x, data.position.y, data.position.z);
+                    newObj.rotation.set(data.rotation.x, data.rotation.y, data.rotation.z);
+                    newObj.scale.set(data.scale.x, data.scale.y, data.scale.z);
+                    return newObj;
+                }
+
+                parsedData.forEach(data => {
+                    const obj = deserializeObject(data);
+                    scene.add(obj);
+                    objects.push(obj);
+                });
+
+                btnLoad.innerHTML = `✅ LOADED!`;
+                setTimeout(() => btnLoad.innerHTML = `📂 LOAD SCENE`, 1000);
+            } catch (err) {
+                console.error("Failed to load scene from memory", err);
+            }
+        });
+
+        // ----------------------------------------------------
+        // Three.js Core Setup (Scene, Camera, Renderer)
+        // ----------------------------------------------------
+        const container = document.getElementById('three-container');
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050510, 0.04);
+
+        const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 1.5, 6);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.toneMapping = THREE.ReinhardToneMapping;
+        renderer.autoClear = false; // Needed for rendering ViewHelper on top
+        container.appendChild(renderer.domElement);
+
+        // ----------------------------------------------------
+        // ViewHelper (Top-Right Graph Control)
+        // ----------------------------------------------------
+        const viewHelper = new ViewHelper(camera, renderer.domElement);
+
+        // Safely Override ViewHelper render to force Top-Right positioning
+        const originalVHRender = viewHelper.render.bind(viewHelper);
+        viewHelper.render = function (renderer) {
+            const originalSetViewport = renderer.setViewport.bind(renderer);
+            renderer.setViewport = function (x, y, w, h) {
+                // Intercept ViewHelper's bottom-right viewport and pull it to top-right
+                if (w === 128 && h === 128) {
+                    y = window.innerHeight - 128;
+                }
+                originalSetViewport(x, y, w, h);
+            };
+            originalVHRender(renderer);
+            renderer.setViewport = originalSetViewport;
+        };
+
+        container.addEventListener('pointerup', (e) => {
+            const dim = 128;
+            const rect = renderer.domElement.getBoundingClientRect();
+            // Check if click was in Top-Right corner where ViewHelper is rendered
+            const isClickInTopRight = (e.clientX >= rect.right - dim) && (e.clientY <= rect.top + dim);
+
+            if (isClickInTopRight) {
+                // Fake the event so ViewHelper thinks we clicked bottom-right
+                const fakeEvent = {
+                    clientX: e.clientX,
+                    clientY: e.clientY + (rect.height - dim),
+                    button: e.button,
+                    stopPropagation: () => { },
+                    preventDefault: () => { }
+                };
+                viewHelper.handleClick(fakeEvent);
+            }
+        });
+
+        // ----------------------------------------------------
+        // Post-Processing (Bloom for Holographic Effect)
+        // ----------------------------------------------------
+        const composer = new EffectComposer(renderer);
+        const renderScene = new RenderPass(scene, camera);
+        composer.addPass(renderScene);
+
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.threshold = 0.55; // Increased threshold so axes/grid don't bloom
+        bloomPass.strength = 1.6;
+        bloomPass.radius = 0.5;
+        composer.addPass(bloomPass);
+        composer.addPass(new OutputPass());
+
+        // ----------------------------------------------------
+        // Lighting & Environment
+        // ----------------------------------------------------
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const pointLight = new THREE.PointLight(0xffffff, 1.2, 30);
+        pointLight.position.set(0, 5, 2);
+        scene.add(pointLight);
+
+        // Blender-like background grid
+        const gridHelper = new THREE.GridHelper(30, 30, 0x555555, 0x444444);
+        gridHelper.position.y = -1.5;
+        scene.add(gridHelper);
+
+        // Graph Axes
+        const axesHelper = new THREE.AxesHelper(15);
+        axesHelper.position.y = -1.49;
+        const colors = axesHelper.geometry.attributes.color.array;
+        for (let i = 0; i < colors.length; i++) {
+            colors[i] *= 0.5; // Darken axes so they stay below bloom threshold
+        }
+        scene.add(axesHelper);
+
+        // ----------------------------------------------------
+        // Interaction Variables & Helpers
+        // ----------------------------------------------------
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        let objects = [];
+        let hoveredObject = null;
+        let grabbedObject = null;
+        let fusionTarget = null;
+
+        // Abstract Drag Plane geometry for tracking depth
+        const dragPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+        let grabOffset = new THREE.Vector3();
+        let isPinching = false;
+        let lastHandPos = { x: 0, y: 0 };
+        let lastCursorPos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+
+        const spatialCursor = document.getElementById('spatial-cursor');
+
+        // Create New Holographic Object
+        function spawnObject(intersectPos, shapeTypeOverride = null) {
+            let geo;
+            const targetShape = shapeTypeOverride || currentShape;
+
+            if (targetShape === 'cube') geo = new THREE.BoxGeometry(1, 1, 1);
+            else if (targetShape === 'sphere') geo = new THREE.SphereGeometry(0.6, 32, 32);
+            else if (targetShape === 'cone') geo = new THREE.ConeGeometry(0.6, 1.2, 32);
+            else if (targetShape === 'cylinder') geo = new THREE.CylinderGeometry(0.6, 0.6, 1.2, 32);
+            else if (targetShape === 'torus') geo = new THREE.TorusGeometry(0.5, 0.2, 16, 100);
+            else geo = new THREE.BoxGeometry(1, 1, 1);
+
+            const mat = new THREE.MeshStandardMaterial({
+                color: 0x00f2ff,
+                transparent: true,
+                opacity: 0.7,
+                roughness: 0.1,
+                metalness: 0.8,
+                emissive: 0x004455,
+                emissiveIntensity: 0.5
+            });
+
+            const mesh = new THREE.Mesh(geo, mat);
+
+            // Edge wireframe overlay with black color to make edges and corners visible
+            const edges = new THREE.EdgesGeometry(geo);
+            const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.8 }));
+            mesh.add(line);
+
+            mesh.position.copy(intersectPos);
+            // Entry animation targets
+            mesh.scale.set(0.01, 0.01, 0.01);
+            scene.add(mesh);
+            objects.push(mesh);
+
+            mesh.userData.shapeType = targetShape;
+            mesh.userData.targetScale = new THREE.Vector3(1, 1, 1);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // ----------------------------------------------------
+        // Mediapipe Hand Tracking Setup
+        // ----------------------------------------------------
+        const videoElement = document.getElementById('video-element');
+        const canvasElement = document.getElementById('output-canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1, // Limiting to 1 hand for precise single point priority
+            modelComplexity: 1,
+            minDetectionConfidence: 0.75,
+            minTrackingConfidence: 0.75
+        });
+
+        hands.onResults(onResults);
+
+        const cameraHelper = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({ image: videoElement }); },
+            width: 1280,
+            height: 720
+        });
+
+        cameraHelper.start().catch(err => {
+            alert("Camera initialization failed. Please allow camera access and ensure HTTPS.");
+        });
+
+        let frameCount = 0;
+
+        // ----------------------------------------------------
+        // Gesture & Raycast Logic Loop
+        // ----------------------------------------------------
+        function onResults(results) {
+            frameCount++;
+            if (frameCount === 10) {
+                document.getElementById('loading-screen').style.display = 'none';
+            }
+
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            // Draw Faint Debug Overlay tracking points
+            canvasCtx.globalAlpha = 0.5;
+            canvasCtx.translate(canvasElement.width, 0);
+            canvasCtx.scale(-1, 1);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            let handDetected = false;
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                handDetected = true;
+                const hand = results.multiHandLandmarks[0];
+
+                drawConnectors(canvasCtx, hand, HAND_CONNECTIONS, { color: '#00f2ff44', lineWidth: 3 });
+                drawLandmarks(canvasCtx, hand, { color: '#ffffffaa', lineWidth: 1, radius: 2 });
+
+                const thumb = hand[4];
+                const index = hand[8];
+
+                // 1. Calculate Spatial Cursor (midpoint between Thumb & Index)
+                const midX = (thumb.x + index.x) / 2;
+                const midY = (thumb.y + index.y) / 2;
+
+                const screenX = (1 - midX) * window.innerWidth;
+                const screenY = midY * window.innerHeight;
+
+                // Apply slight smoothing to cursor
+                lastCursorPos.x = lastCursorPos.x + (screenX - lastCursorPos.x) * 0.4;
+                lastCursorPos.y = lastCursorPos.y + (screenY - lastCursorPos.y) * 0.4;
+
+                spatialCursor.style.left = `${lastCursorPos.x}px`;
+                spatialCursor.style.top = `${lastCursorPos.y}px`;
+
+                // 2. Prepare Raycaster
+                mouse.x = (lastCursorPos.x / window.innerWidth) * 2 - 1;
+                mouse.y = -(lastCursorPos.y / window.innerHeight) * 2 + 1;
+                raycaster.setFromCamera(mouse, camera);
+
+                // --- Index-Finger-Up Gesture Detection ---
+                // Index tip (8) must be clearly above its PIP (6).
+                // All other fingers (middle, ring, pinky) must be curled: tip.y > pip.y
+                // Thumb is free (not checked) to avoid false negatives.
+                const indexTip  = hand[8],  indexPIP  = hand[6],  indexMCP = hand[5];
+                const middleTip = hand[12], middlePIP = hand[10];
+                const ringTip   = hand[16], ringPIP   = hand[14];
+                const pinkyTip  = hand[20], pinkyPIP  = hand[18];
+
+                const indexExtended  = indexTip.y < indexPIP.y && indexTip.y < indexMCP.y;
+                const middleCurled   = middleTip.y > middlePIP.y;
+                const ringCurled     = ringTip.y   > ringPIP.y;
+                const pinkyCurled    = pinkyTip.y  > pinkyPIP.y;
+                const isIndexUp      = indexExtended && middleCurled && ringCurled && pinkyCurled;
+
+                if (isIndexUp && !thumbsUpCooldown) {
+                    thumbsUpFrames++;
+                    if (thumbsUpFrames >= THUMBS_UP_THRESHOLD) {
+                        // Spawn shape at center
+                        spawnObject(new THREE.Vector3(0, 0, 0));
+                        selectObject(objects[objects.length - 1]);
+                        showSpawnToast(currentShape);
+                        thumbsUpCooldown = true;
+                        thumbsUpFrames = 0;
+                        setTimeout(() => { thumbsUpCooldown = false; }, 1500);
+                    }
+                } else if (!isIndexUp) {
+                    thumbsUpFrames = 0;
+                }
+
+                // 3. Pinch Detection State Machine
+                const pinchDist = Math.sqrt(Math.pow(thumb.x - index.x, 2) + Math.pow(thumb.y - index.y, 2));
+                const currentlyPinching = pinchDist < 0.055;
+
+                if (currentlyPinching) {
+                    spatialCursor.classList.add('grabbing');
+
+                    if (!isPinching) {
+                        // --- GRAB INITIATED ---
+                        isPinching = true;
+                        const intersects = raycaster.intersectObjects(objects, true); // recursive true
+
+                        if (intersects.length > 0) {
+                            grabbedObject = getRootObject(intersects[0].object);
+                            selectObject(grabbedObject);
+
+                            dragPlane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(dragPlane.normal), grabbedObject.position);
+                            raycaster.ray.intersectPlane(dragPlane, grabOffset);
+                            grabOffset.sub(grabbedObject.position);
+                            setHighlight(grabbedObject, 1.0);
+
+                            if (currentTool === 'delete') {
+                                // Shrink out animation logic
+                                grabbedObject.userData.targetScale.set(0.001, 0.001, 0.001);
+                                const toRemove = grabbedObject;
+                                setTimeout(() => {
+                                    scene.remove(toRemove);
+                                    objects = objects.filter(o => o !== toRemove);
+                                    if (selectedObject === toRemove) selectObject(null);
+                                }, 300);
+                                grabbedObject = null;
+                            }
+                        } else {
+                            selectObject(null);
+                        }
+
+                        lastHandPos = { x: lastCursorPos.x, y: lastCursorPos.y };
+                    } else {
+                        // --- HOLDING / DRAGGING ---
+                        if (grabbedObject) {
+                            if (currentTool === 'move' || currentTool === 'combine') {
+                                const targetPos = new THREE.Vector3();
+                                raycaster.ray.intersectPlane(dragPlane, targetPos);
+                                if (targetPos) {
+                                    targetPos.sub(grabOffset);
+                                    grabbedObject.position.lerp(targetPos, 0.3); // Lerp for smooth follow
+                                }
+
+                                if (currentTool === 'combine') {
+                                    // Collision check with other objects using Box3
+                                    const grabbedBox = new THREE.Box3().setFromObject(grabbedObject);
+                                    let foundTarget = null;
+                                    for (let obj of objects) {
+                                        if (obj !== grabbedObject) {
+                                            const objBox = new THREE.Box3().setFromObject(obj);
+                                            // Make intersection slightly forgiving
+                                            if (grabbedBox.intersectsBox(objBox)) {
+                                                foundTarget = obj;
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    if (foundTarget !== fusionTarget) {
+                                        if (fusionTarget) setHighlight(fusionTarget, 0.5); // Revert older target
+                                        fusionTarget = foundTarget;
+                                        if (fusionTarget) setHighlight(fusionTarget, 0.8, true); // Highlight red
+                                    }
+                                }
+                            } else if (currentTool === 'rotate') {
+                                const deltaX = lastCursorPos.x - lastHandPos.x;
+                                const deltaY = lastCursorPos.y - lastHandPos.y;
+                                grabbedObject.rotation.y += deltaX * 0.015;
+                                grabbedObject.rotation.x += deltaY * 0.015;
+                            } else if (currentTool === 'scale') {
+                                const deltaY = lastHandPos.y - lastCursorPos.y;
+                                const factor = 1 + (deltaY * 0.015);
+                                let newScaleStr = grabbedObject.scale.x * factor;
+                                newScaleStr = Math.max(0.2, Math.min(newScaleStr, 5.0)); // Clamp scale
+                                grabbedObject.userData.targetScale.set(newScaleStr, newScaleStr, newScaleStr);
+                            }
+
+                            lastHandPos = { x: lastCursorPos.x, y: lastCursorPos.y };
+                        }
+                    }
+
+                } else {
+                    // --- RELEASED ---
+                    if (isPinching) {
+                        isPinching = false;
+                        spatialCursor.classList.remove('grabbing');
+                        
+                        if (currentTool === 'combine' && grabbedObject && fusionTarget) {
+                            // Perform fusion by placing both into a Group
+                            const newGroup = new THREE.Group();
+                            scene.add(newGroup);
+
+                            // Try retaining mid-point position
+                            const worldPos = new THREE.Vector3();
+                            grabbedObject.getWorldPosition(worldPos);
+                            newGroup.position.copy(worldPos);
+
+                            const oldTarget = fusionTarget;
+                            const oldGrabbed = grabbedObject;
+
+                            // Take world transform of members
+                            scene.remove(oldGrabbed);
+                            scene.remove(oldTarget);
+
+                            // Remove from master list
+                            objects = objects.filter(o => o !== oldGrabbed && o !== oldTarget);
+
+                            // Attach alters member transform to be correctly relative to parent
+                            newGroup.attach(oldGrabbed);
+                            newGroup.attach(oldTarget);
+
+                            newGroup.userData.shapeType = 'group';
+                            newGroup.userData.targetScale = new THREE.Vector3(1, 1, 1);
+                            
+                            objects.push(newGroup);
+
+                            showSpawnToast("SHAPES MERGED");
+
+                            fusionTarget = null;
+                            grabbedObject = null;
+                            selectObject(newGroup);
+                        } else if (grabbedObject) {
+                            if (grabbedObject !== selectedObject) setHighlight(grabbedObject, 0.5);
+                            grabbedObject = null;
+                        }
+                        if (fusionTarget) {
+                            setHighlight(fusionTarget, 0.5);
+                            fusionTarget = null;
+                        }
+                    }
+
+                    // Hover Effects
+                    const intersects = raycaster.intersectObjects(objects, true);
+
+                    let rootHover = null;
+                    if (intersects.length > 0) rootHover = getRootObject(intersects[0].object);
+
+                    if (hoveredObject && (!intersects.length || rootHover !== hoveredObject)) {
+                        if (!isPinching && hoveredObject !== selectedObject) setHighlight(hoveredObject, 0.5);
+                        hoveredObject = null;
+                    }
+
+                    if (intersects.length > 0 && !isPinching) {
+                        hoveredObject = rootHover;
+                        if (hoveredObject !== selectedObject) setHighlight(hoveredObject, 0.8);
+                    }
+
+                    if (currentTool === 'delete' && hoveredObject) {
+                        spatialCursor.classList.add('deleting');
+                    } else {
+                        spatialCursor.classList.remove('deleting');
+                    }
+                }
+            }
+
+            if (!handDetected) {
+                spatialCursor.style.opacity = '0';
+                if (isPinching && grabbedObject) {
+                    setHighlight(grabbedObject, 0.5);
+                    grabbedObject = null;
+                }
+                if (fusionTarget) {
+                    setHighlight(fusionTarget, 0.5);
+                    fusionTarget = null;
+                }
+                isPinching = false;
+                hoveredObject = null;
+            } else {
+                spatialCursor.style.opacity = '1';
+            }
+
+            canvasCtx.restore();
+        }
+
+        // ----------------------------------------------------
+        // Main Render Loop
+        // ----------------------------------------------------
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Progress ViewHelper camera animations based on clock delta
+            const delta = clock.getDelta();
+            if (viewHelper.animating === true) viewHelper.update(delta);
+
+            // Smooth animations running independently of hand polling
+            objects.forEach(obj => {
+                if (obj.userData.targetScale) {
+                    obj.scale.lerp(obj.userData.targetScale, 0.15);
+                }
+                // Objects stable until manually rotated via gesture
+            });
+
+            // Static Blender grid (removed pulsate logic)
+            // const time = Date.now() * 0.001;
+            // gridHelper.material.opacity = 0.15 + (Math.sin(time * 2) * 0.05);
+
+            if (selectedObject) {
+                const isFocused = (el) => document.activeElement === el;
+                if (!isFocused(transformInputs.loc.x)) transformInputs.loc.x.value = selectedObject.position.x.toFixed(2);
+                if (!isFocused(transformInputs.loc.y)) transformInputs.loc.y.value = selectedObject.position.y.toFixed(2);
+                if (!isFocused(transformInputs.loc.z)) transformInputs.loc.z.value = selectedObject.position.z.toFixed(2);
+
+                if (!isFocused(transformInputs.rot.x)) transformInputs.rot.x.value = THREE.MathUtils.radToDeg(selectedObject.rotation.x).toFixed(1);
+                if (!isFocused(transformInputs.rot.y)) transformInputs.rot.y.value = THREE.MathUtils.radToDeg(selectedObject.rotation.y).toFixed(1);
+                if (!isFocused(transformInputs.rot.z)) transformInputs.rot.z.value = THREE.MathUtils.radToDeg(selectedObject.rotation.z).toFixed(1);
+
+                if (!isFocused(transformInputs.scale.x)) transformInputs.scale.x.value = selectedObject.scale.x.toFixed(2);
+                if (!isFocused(transformInputs.scale.y)) transformInputs.scale.y.value = selectedObject.scale.y.toFixed(2);
+                if (!isFocused(transformInputs.scale.z)) transformInputs.scale.z.value = selectedObject.scale.z.toFixed(2);
+            }
+
+            composer.render();
+            viewHelper.render(renderer);
+        }
+
+        animate();
+
+    </script>
+</body>
+
+</html>
