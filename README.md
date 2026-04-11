@@ -43,6 +43,9 @@ Because MediaPipe requires secure contexts to access the device camera, the simp
 - **Create**: Curl all fingers except your Index finger straight up. Hold for 0.3s.
 - **Grab / Interact**: Bring your Thumb and Index finger together to pinch an object on the spatial cursor.
 
+## Live Demo 
+https://spatial-interaction-workspace.vercel.app/
+
 ## ScreenShots
 <img width="1903" height="937" alt="image" src="https://github.com/user-attachments/assets/e9344f6f-bf3e-425b-b0d6-adcef1a59f94" />
 
