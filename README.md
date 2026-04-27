@@ -49,7 +49,10 @@ https://spatial-interaction-workspace.vercel.app/
 ## ScreenShots
 <img width="1903" height="937" alt="image" src="https://github.com/user-attachments/assets/e9344f6f-bf3e-425b-b0d6-adcef1a59f94" />
 
-<img width="1919" height="969" alt="image" src="https://github.com/user-attachments/assets/4c72e08d-4967-4fd3-bcaa-ae217cb9412c" />
+<img width="1918" height="885" alt="image" src="https://github.com/user-attachments/assets/e622662e-857f-4711-a899-5937dfa0b3e6" />
+
+<img width="1915" height="898" alt="image" src="https://github.com/user-attachments/assets/18b557d7-3747-4a82-a4d7-773368dca8ec" />
+
 
 ## License
 
